@@ -1,0 +1,8 @@
+projects/*
+axicli-2.7.0*/*
+.eggs
+.ipynb_checkpoints
+*/*.ipynb_checkpoints
+*/*.pyc
+*/*wandb
+*/*lightning_logs
