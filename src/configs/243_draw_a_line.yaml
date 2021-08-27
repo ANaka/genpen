@@ -1,0 +1,18 @@
+
+
+paper_size:  '11x17 inches'
+border: 20  # mm
+image_rescale_factor: 0.25
+smooth_disk_size: 2
+hist_clip_limit: 0.1
+hist_nbins: 32
+intensity_min: 0.
+intensity_max: 1.
+hatch_spacing_min: 0.3
+hatch_spacing_max: 1.
+pixel_width: 0.9
+pixel_height: 0.9
+angle_jitter: '0'
+pixel_rotation: '0'
+merge_tolerances: [0.3, 0.4, 0.5]
+simplify_tolerances: [0.2]
