@@ -670,53 +670,53 @@ def occlude(top, bottom, distance=1e-6):
         return bottom.buffer(distance).difference(top.buffer(distance))
     
     
-class ParticleCluster(object):
+# class ParticleCluster(object):
     
-    def __init__(
-        self,
-        pos,
-        perlin_grid,
-    ):
-        self.pos = Point(pos)
-        self.pg = perlin_grid
-        self.particles = []
+#     def __init__(
+#         self,
+#         pos,
+#         perlin_grid,
+#     ):
+#         self.pos = Point(pos)
+#         self.pg = perlin_grid
+#         self.particles = []
         
-    def gen_start_pts_gaussian(
-            self,
-            n_particles=10,
-            xloc=0.,
-            xscale=1.,
-            yloc=0.,
-            yscale=1.,
-        ):
-        xs = self.pos.x + ss.norm(loc=xloc, scale=xscale).rvs(n_particles)
-        ys = self.pos.y + ss.norm(loc=yloc, scale=yscale).rvs(n_particles)
-        self.start_pts = [Point((x,y)) for x,y in zip(xs, ys)]
+#     def gen_start_pts_gaussian(
+#             self,
+#             n_particles=10,
+#             xloc=0.,
+#             xscale=1.,
+#             yloc=0.,
+#             yscale=1.,
+#         ):
+#         xs = self.pos.x + ss.norm(loc=xloc, scale=xscale).rvs(n_particles)
+#         ys = self.pos.y + ss.norm(loc=yloc, scale=yscale).rvs(n_particles)
+#         self.start_pts = [Point((x,y)) for x,y in zip(xs, ys)]
         
-    def init_particles(self, start_bounds=None):
-        for pt in self.start_pts:
-            p = Particle(pos=pt, grid=self.pg)
-            if start_bounds == None:
-                self.particles.append(p)
-            elif start_bounds.contains(p.pos):
-                self.particles.append(p)
+#     def init_particles(self, start_bounds=None):
+#         for pt in self.start_pts:
+#             p = Particle(pos=pt, grid=self.pg)
+#             if start_bounds == None:
+#                 self.particles.append(p)
+#             elif start_bounds.contains(p.pos):
+#                 self.particles.append(p)
                 
-    @functools.singledispatchmethod           
-    def step(self, n_steps):
-        for p,n in zip(self.particles, n_steps):
-            for i in range(n):
-                p.step()
+#     @functools.singledispatchmethod           
+#     def step(self, n_steps):
+#         for p,n in zip(self.particles, n_steps):
+#             for i in range(n):
+#                 p.step()
     
-    @step.register
-    def _(self, n_steps: int):
-        n_steps = [n_steps] * len(self.particles)
-        for p,n in zip(self.particles, n_steps):
-                for i in range(n):
-                    p.step()
+#     @step.register
+#     def _(self, n_steps: int):
+#         n_steps = [n_steps] * len(self.particles)
+#         for p,n in zip(self.particles, n_steps):
+#                 for i in range(n):
+#                     p.step()
                     
-    @property
-    def lines(self):
-        return MultiLineString([p.line for p in self.particles])
+#     @property
+#     def lines(self):
+#         return MultiLineString([p.line for p in self.particles])
     
     
     
