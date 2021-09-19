@@ -1417,3 +1417,6 @@ class BezierCurve(object):
     @property
     def linestring(self):
         return LineString(self.evaluated_curve)
+    
+def vsketch_to_shapely(sketch):
+    return [[LineString([Point(pt.real, pt.imag) for pt in lc]) for lc in layer] for layer in sketch.document.layers.values()]
