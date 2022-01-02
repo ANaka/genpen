@@ -992,7 +992,7 @@ def polygonize_circle(circle, n_corners):
     corners = [circle.boundary.interpolate(a, normalized=True) for a in angles]
     return Polygon(corners)
 
-def reg_polygon(point, radius, n_corners):
+def reg_polygon(point, radius, n_corners, **kwargs):
     circle = point.buffer(radius)
     return polygonize_circle(circle, n_corners)
 
@@ -1002,10 +1002,11 @@ class RegPolygon(object):
     radius: float=1.
     n_corners: int = 6
     rotation: float = 0.  #degrees
+    buffer_kwargs: dict = field(default_factory=dict)
    
     @property
     def poly(self):
-        poly = reg_polygon(self.point, self.radius, self.n_corners)
+        poly = reg_polygon(self.point, self.radius, self.n_corners, **self.buffer_kwargs)
         return sa.rotate(poly, self.rotation)
     
     @property
@@ -1417,6 +1418,33 @@ class BezierCurve(object):
     @property
     def linestring(self):
         return LineString(self.evaluated_curve)
+    
+def vsketch_to_shapely(sketch):
+    return [[LineString([Point(pt.real, pt.imag) for pt in lc]) for lc in layer] for layer in sketch.document.layers.values()]
+
+def make_angled_line(deg=0, length=1, rad=None, center=None):
+    angle = Angle(deg=deg, rad=rad).rad
+    if center:
+        coords = [np.array((np.cos(angle), np.sin(angle))) * length/2 * ii for ii in [-1, 1]]
+        center = Point(center)
+        center = np.array([center.x, center.y])
+        coords = [c + center for c in coords]
+        return LineString(coords)
+    else:
+        return LineString([(0,0), (length*np.cos(angle), length*np.sin(angle))])
+
+    
+class CenteredAngledLine(object):
+    def __init__(self, center=None, deg=0, length=1, rad=None):
+        self.angle = Angle(deg=deg, rad=rad).rad
+        self.length = length
+        if center is None:
+            self.center = Point(0,0)
+            
+    @property
+    def ls(self):
+        ls = angled_line
+        
     
 def vsketch_to_shapely(sketch):
     return [[LineString([Point(pt.real, pt.imag) for pt in lc]) for lc in layer] for layer in sketch.document.layers.values()]

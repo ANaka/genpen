@@ -51,6 +51,7 @@ class AxiCam(object):
         self.image_savedir = image_savedir
         self.cam = cam
         
+        
     @property
     def n_layers(self):
         return len(self.doc.layers)
@@ -61,21 +62,23 @@ class AxiCam(object):
         time.sleep(wait_time)
         cam.save_image()
         
-    def init_cam(self):
+    def init_cam(self, camera_index=None):
         if self.cam is not None:
             try:
                 self.cam.close()
             except:
                 pass
         
-        self.cam = pov.Camera(savedir=self.image_savedir)
+        self.cam = pov.Camera(savedir=self.image_savedir, camera_index=camera_index)
         return self.cam
         
     
         
-    def plot_layers(self, prog_bar=True, wait_times=0., start_layer=0):
+    def plot_layers(self, prog_bar=True, wait_times=0., start_layer=0, stop_layer=None):
         wait_times = gp.make_callable(wait_times)
-        iterator = range(start_layer, self.n_layers)
+        if stop_layer is None:
+            stop_layer = self.n_layers
+        iterator = range(start_layer, stop_layer)
         if prog_bar:
             iterator = tqdm(iterator)
         
