@@ -32,6 +32,7 @@ class AxiCam(object):
         image_savedir=None,
         plot_id=None,
         cam=None,
+        camera_index=None,
         ):
         if plot_id == None:
             plot_id = fn.get_current_plot_id()
@@ -39,16 +40,15 @@ class AxiCam(object):
         
         if svg_path == None:
             svg_path = Path(gp.SVG_SAVEDIR).joinpath(plot_id).with_suffix('.svg')
-        self.svg_path = svg_path    
+        self.svg_path = svg_path
         self.ad = axidraw.AxiDraw()
-        
         self.ad.plot_setup(self.svg_path)
         self.ad.options.mode = "layers"
         self.ad.options.units = 2
         self.ad.update()
-        
         self.doc = vpype.read_multilayer_svg(self.svg_path, 0.1)
         self.image_savedir = image_savedir
+        self.camera_index = camera_index
         self.cam = cam
         
         
@@ -62,19 +62,24 @@ class AxiCam(object):
         time.sleep(wait_time)
         cam.save_image()
         
-    def init_cam(self, camera_index=None):
-        if self.cam is not None:
-            try:
-                self.cam.close()
-            except:
-                pass
+    def init_cam(self, camera_index=None, savedir=None, **kwargs):
         
-        self.cam = pov.Camera(savedir=self.image_savedir, camera_index=camera_index)
+        try:
+            self.cam.close()
+        except AttributeError:
+            pass
+        
+        if savedir is None:
+            savedir = self.image_savedir
+        if camera_index is None:
+            camera_index = self.camera_index
+        
+        self.cam = pov.Camera(camera_index=camera_index, savedir=savedir, **kwargs)
         return self.cam
         
     
         
-    def plot_layers(self, prog_bar=True, wait_times=0., start_layer=0, stop_layer=None):
+    def plot_layers(self, prog_bar=True, wait_times=0., start_layer=0, stop_layer=None, reinit_cam=True, init_cam_kwargs=None):
         wait_times = gp.make_callable(wait_times)
         if stop_layer is None:
             stop_layer = self.n_layers
@@ -83,7 +88,11 @@ class AxiCam(object):
             iterator = tqdm(iterator)
         
         flag = GracefulExiter()
-        self.init_cam()
+        
+        init_cam_kwargs = {} if init_cam_kwargs is None else init_cam_kwargs
+        
+        if reinit_cam:
+            self.init_cam(**init_cam_kwargs)
         for layer_number in iterator:
             wait_time = wait_times()
             self.plot_layer(cam=self.cam, layer_number=layer_number, wait_time=wait_time)
