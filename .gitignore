@@ -6,3 +6,4 @@ axicli-2.7.0*/*
 */*.pyc
 */*wandb
 */*lightning_logs
+**/__pycache__/**

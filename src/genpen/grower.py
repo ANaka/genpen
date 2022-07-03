@@ -11,7 +11,7 @@ from typing import List, Generic
 from genpen import genpen as gp, utils as utils
 from scipy import stats as ss
 from tqdm import tqdm
-
+from enum import Enum
 import genpen
 
 class GrowerParams(object):
@@ -33,6 +33,7 @@ class GrowerParams(object):
         pt_to_poly_func='buffer_pt',
         halt_condition_func='return_false',
         loss_threshold=1000,
+        poly_transformation=None,
         
     ):
         self.n_pts_eval_per_iter = n_pts_eval_per_iter
@@ -50,6 +51,7 @@ class GrowerParams(object):
         self.pt_to_poly_func = pt_to_poly_func
         self.halt_condition_func = halt_condition_func
         self.loss_threshold = loss_threshold
+        self.poly_transformation = poly_transformation
         
     
     @property
@@ -62,11 +64,15 @@ class GrowerParams(object):
     def loss_scaled_rad(self):
         return np.interp(self.sketch.current_pt['loss'], self.loss_range, self.rad_range)
         
+    # this is a silly way to do this, these should be callbacks
     @property
     def _loss_func(self):
         return getattr(self, self.loss_func)
     
     def haussdorf_from_agg(self, pt):
+        return pt.hausdorff_distance(self.sketch.agg_poly)
+    
+    def negative_haussdorf_from_agg(self, pt):
         return pt.hausdorff_distance(self.sketch.agg_poly)
     
     def negative_distance_from_target(self, pt):
@@ -171,6 +177,8 @@ class Grower(object):
     
     def selected_pts_to_polys(self):
         self.new_polys = self.selected_pts.apply(self._p._pt_to_poly_func, axis=1)
+        if self._p.poly_transformation is not None:
+            self.new_polys['geometry'] = self.new_polys.apply(self._p.poly_transformation, axis=1)
     
     def agglomerate_polys(self):
         for ii, row in self.new_polys.iterrows():
