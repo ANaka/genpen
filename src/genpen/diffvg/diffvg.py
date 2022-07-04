@@ -10,24 +10,6 @@ import torch.nn.functional as F
 import numpy as np
 import clip
 
-@attr.define()
-class CircleP(object):
-    center: Tensor = Tensor((0., 0.))
-    radius: Tensor = Tensor((1.,))
-    stroke_width: Tensor = Tensor((1.,))
-    color: Tensor = Tensor((1., 1., 1., 1.))
-    
-    def requires_grad(self, requires_grad=True):
-        self.center.requires_grad = requires_grad
-        self.radius.requires_grad = requires_grad
-        self.stroke_width.requires_grad = requires_grad
-        self.color.requires_grad = requires_grad
-        return self
-    
-
-CANVAS_WIDTH = 800
-CANVAS_HEIGHT = 800
-DRAW_WHITE_BACKGROUND = False
 
 class Canvas(object):
     
@@ -62,138 +44,18 @@ class Canvas(object):
                 torch.ones(w, h, 3, device=dg.get_device()) * (1-img[:, :, 3:4]))
         else:
             img = img[:, :, :3]
-        img = img.unsqueeze(0)
+        img = img.unsqueeze(0).permute(0, 3, 1, 2)
         
         if as_pil:
             return to_pil(img)
         else:
-            img = img.permute(0, 3, 1, 2)
+            img = img
             return img
 
-def render_circles(cc, multiplier=1):
-    """Render circles to image.
-
-    Args:
-      centers: points defining the lines
-      stroke_widths: the widths of the lines
-      all_colors: line colours
-      multiplier: scale factor to enlarge drawing
-
-    Returns:
-      image with lines drawn
-    """
-    # Store `centers` definitions as shapes, colours and widths.
-    shapes = []
-    shape_groups = []
-    for c in cc:
-      center = c.center.contiguous().cpu()
-      radius = c.radius.cpu()
-      width = c.stroke_width.cpu()
-      color = c.color.cpu()
-      path = dg.Circle(
-          radius=radius*multiplier, 
-          center=center * multiplier,
-          stroke_width=width * multiplier
-          )
-      shapes.append(path)
-      path_group = dg.ShapeGroup(
-          shape_ids=torch.tensor([len(shapes) - 1]),
-          fill_color=None,
-          stroke_color=color)
-      shape_groups.append(path_group)
-
-    # Rasterize the image.
-    scene_args = dg.RenderFunction.serialize_scene(
-        CANVAS_WIDTH * multiplier,
-        CANVAS_HEIGHT * multiplier,
-        shapes, shape_groups)
-    img = dg.RenderFunction.apply(
-        CANVAS_WIDTH * multiplier,
-        CANVAS_HEIGHT * multiplier,
-        2, 2, 0, None, *scene_args)
-    if DRAW_WHITE_BACKGROUND:
-      w, h = img.shape[0], img.shape[1]
-      img = img[:, :, 3:4] * img[:, :, :3] + (
-          torch.ones(w, h, 3, device=dg.get_device()) * (1-img[:, :, 3:4]))
-    else:
-      img = img[:, :, :3]
-    img = img.unsqueeze(0)
-
-    return img
 
 def to_pil(img):
-    return TF.to_pil_image(img.detach().cpu().squeeze().permute(2, 0, 1))
+    return TF.to_pil_image(img.detach().cpu().squeeze())
 
-class CircleCollection(nn.Module):
-    
-    def __init__(self, centers, radii, stroke_widths, colors, ids):
-        super().__init__()
-        self.centers = centers
-        self.radii = radii
-        self.stroke_widths = stroke_widths
-        self.colors = colors
-        self.ids = ids
-        
-    @classmethod
-    def from_arrays(cls, centers, radii, stroke_widths, colors, ids):
-        centers = torch.tensor(centers, requires_grad=True)
-        radii = torch.tensor(radii, requires_grad=True)
-        stroke_widths = torch.tensor(stroke_widths, requires_grad=True)
-        colors = torch.tensor(colors, requires_grad=True)
-        ids = torch.tensor(ids)
-        return cls(centers, radii, stroke_widths, colors, ids)
-        
-    @property
-    def n_circles(self):
-        return self.centers.shape[0]
-    
-    def requires_grad(self, requires_grad=True):
-        self.centers.requires_grad = requires_grad
-        self.radii.requires_grad = requires_grad
-        self.stroke_widths.requires_grad = requires_grad
-        self.colors.requires_grad = requires_grad
-        return self
-    
-    def __getitem__(self, ii):
-        return CircleP(
-            self.centers[ii], 
-            self.radii[ii], 
-            self.stroke_widths[ii], 
-            self.colors[ii],
-            self.ids[ii],
-            )
-    
-    def __iter__(self):
-        for ii in range(self.n_circles):
-            yield self[ii]
-        
-    def to_circle_ps(self):
-        circle_ps = []
-        for ii in range(self.centers.shape[0]):
-            circle_ps.append(CircleP(
-                center=self.centers[ii],
-                radius=self.radii[ii],
-                stroke_width=self.stroke_widths[ii],
-                color=self.colors[ii]
-            ))
-        return circle_ps
-    
-    def get_shapes_and_shapegroups(self):
-        shapes = []
-        shape_groups = []
-        for ii, param_set in enumerate(self):
-            path = dg.Circle(
-                radius=param_set.radius.cpu(), 
-                center=param_set.center.contiguous().cpu(),
-                stroke_width=param_set.stroke_width.cpu(),
-                
-                )
-            shapes.append(path)
-            path_group = dg.ShapeGroup(
-                shape_ids=torch.tensor([len(shapes) - 1]),
-                fill_color=None,
-                stroke_color=param_set.color.cpu())
-            shape_groups.append(path_group)
     
 def LazyRelu(input_size):
     return nn.Sequential(
@@ -218,142 +80,6 @@ def LazyTanh(input_size):
         nn.LazyLinear(input_size),
         nn.Tanh(),
     )
-    
-def init_weights(m):
-    if isinstance(m, nn.Linear):
-        torch.nn.init.xavier_uniform(m.weight)
-        m.bias.data.fill_(0.01)
-        
-class CircleNet(nn.Module):
-    
-    
-    def __init__(
-        self, 
-        n_circles,
-        x_range,
-        y_range,
-        rad_range,
-        init_centers=None,
-        init_radii=None,
-        ):
-        super().__init__()
-        self.n_circles = n_circles
-        self.xmin, self.xmax = x_range
-        self.ymin, self.ymax = y_range
-        self.radmin, self.radmax = rad_range
-        
-        if init_centers is None:
-            xs = torch.rand(n_circles, 1) * (self.xmax - self.xmin) + self.xmin
-            ys = torch.rand(n_circles, 1) * (self.ymax - self.ymin) + self.ymin
-            init_centers = torch.cat([xs, ys], axis=1)
-        self.init_centers = init_centers
-        
-        if init_radii is None:
-            init_radii = torch.rand(n_circles) * (self.radmax - self.radmin) + self.radmin
-        self.init_radii = init_radii
-        
-        self.net =nn.Sequential(
-            nn.Linear(0, 128),
-            nn.ReLU(),
-            LazyRelu(128),
-            LazyRelu(128),
-            LazyRelu(128),
-        )
-        
-        
-        self.x_outputs = LazyTanh(self.n_circles)
-        self.y_outputs = LazyTanh(self.n_circles)
-        self.radius_outputs = LazyTanh(self.n_circles)
-        
-        
-    def initialize_weights(self):
-        self.forward()
-        self.net.apply(init_weights)
-        self.x_outputs.apply(init_weights)
-        self.y_outputs.apply(init_weights)
-        self.radius_outputs.apply(init_weights)
-        
-    def get_net_output(self):
-        return self.net(Tensor())
-        
-    def get_radii(self, x):
-        return self.radius_outputs(x) * (self.radmax - self.radmin) * 0.5 + self.init_radii
-    
-    def get_xs(self, x):
-        return self.x_outputs(x).unsqueeze(1) * (self.xmax - self.xmin) * 0.5
-    
-    def get_ys(self, x):
-        return self.y_outputs(x).unsqueeze(1) * (self.ymax - self.ymin) * 0.5 
-    
-    def get_centers(self, x):
-        return torch.cat([self.get_xs(x), self.get_ys(x)], axis=1) + self.init_centers
-    
-    def forward(self):
-        x = self.get_net_output()
-        centers = self.get_centers(x)
-        radii = self.get_radii(x)
-        colors = torch.ones((self.n_circles,4))
-        stroke_widths = torch.ones((self.n_circles,1)) * 0.4
-
-        cc = CircleCollection(centers=centers, radii=radii, stroke_widths=stroke_widths, colors=colors)
-        return cc
-    
-
-    
-    
-def train(loss_weights=None):
-    
-    cc = model.forward()
-    
-    if loss_weights is None:
-        loss_weights = {
-            'big_rad_loss': 1,
-            'overlap_loss': 1,
-            'distance_loss': 1,
-            'out_of_bounds_loss': 1,
-            
-        }
-    optim.zero_grad()
-    losses = {}
-    overlap_buffer = 0
-
-    # desired rad size
-    # target_rad_loss = (target_radius - cc.radii).pow(2).sum()
-    
-    # big rad 
-    losses['big_rad_loss'] = (-cc.radii).exp().sum()
-
-    # prevent overlap
-    dists = torch.cdist(cc.centers, cc.centers)
-    upper_dists = torch.triu(dists)
-    nonzero_inds = torch.nonzero(upper_dists, as_tuple=True)
-    dists[nonzero_inds]
-    summed_rads = cc.radii.unsqueeze(0).T + cc.radii.unsqueeze(0)
-    edge_to_edge_dists = dists[nonzero_inds] - summed_rads[nonzero_inds] - overlap_buffer
-    losses['overlap_loss'] = F.relu(-edge_to_edge_dists).pow(3).sum()
-    losses['distance_loss'] = edge_to_edge_dists.pow(2).sum()
-
-    # out of bounds
-    xs = cc.centers[:, 0]
-    ys = cc.centers[:, 1]
-    left_edge_dist = F.relu(-((xs - cc.radii) - xmin))
-    right_edge_dist = F.relu(-((xmax - (xs + cc.radii))))
-    bottom_edge_dist = F.relu(-((ys - cc.radii) - ymin))
-    top_edge_dist = F.relu(-(ymax - (ys + cc.radii)))
-    losses['out_of_bounds_loss'] = (left_edge_dist + right_edge_dist + bottom_edge_dist + top_edge_dist).pow(2).sum()
-    
-    #maximize skewnewss
-    # losses['skewness_loss'] = -(moment(cc.radii, n=3).pow(2))
-    # losses['variance_loss'] = -(moment(cc.radii, n=2).pow(2))
-
-    scaled_losses = {key: loss*loss_weights[key] for key, loss in losses.items()}
-    loss = sum(scaled_losses.values())
-
-    loss.backward()
-    optim.step()
-    
-    scaled_losses['loss'] = loss
-    return losses, scaled_losses, cc
 
 class CanvasNet(nn.Module):
     
@@ -368,7 +94,8 @@ class CanvasNet(nn.Module):
         self.backbone = backbone
         self.shapes_head = shapes_head
         self.shape_groups_head = shape_groups_head
-        self.seed_tensor = nn.Parameter(torch.tensor([0.]))
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.seed_tensor = nn.Parameter(torch.tensor([0.5])).to(self.device)
         self.canvas = canvas
         
     def forward(self, input=None):
@@ -436,15 +163,14 @@ class ShapeMaker(nn.Module):
         n_shapes,
         base_id=None,
         param_transforms=None,
-        init_params = None,
         ):
         super().__init__()
         self.shape_class = shape_class
         self.base_id = np.random.randint(1e5) if base_id is None else base_id
         self.n_shapes = n_shapes
         self.ids = np.arange(n_shapes) + self.base_id
-        self.param_transforms = {} if param_transforms is None else param_transforms
-        self.init_params = {} if init_params is None else init_params
+        param_transforms = {} if param_transforms is None else param_transforms
+        self.param_transforms = nn.ModuleDict(param_transforms)
         
         
         
@@ -454,10 +180,7 @@ class ShapeMaker(nn.Module):
         
         
         for param_name, transform in self.param_transforms.items():
-            params[param_name] = transform(params[param_name])
-            
-            if self.init_params:
-                params[param_name] += self.transformed_init_params[param_name]
+            params[param_name] = transform.forward(params[param_name])
             
         for ii in range(self.n_shapes):
             param_set = {key: value[ii] for key, value in params.items()}
@@ -493,3 +216,8 @@ class ParamHead(nn.Module):
     def forward(self, x):
         return {key: net(x) for key, net in self.nets.items()}
         
+        
+def init_weights(m, gain=3):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform_(m.weight, gain=gain)
+        m.bias.data.fill_(0.01)
