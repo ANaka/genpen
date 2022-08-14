@@ -4,7 +4,7 @@ from PIL import Image
 import attr
 import pydiffvg as dg
 import torch
-from torchvision import transforms
+from torchvision import transforms, models
 from torchvision.transforms import functional as TF
 import torch.nn.functional as F
 import numpy as np
@@ -109,7 +109,12 @@ class CanvasNet(nn.Module):
             'shape_groups_tensors': shape_groups_tensors,
         }
         img = self.canvas.render(shapes, shape_groups)
-        return shapes, shape_groups, tensors, img
+        
+        return dict(
+            shapes=shapes, 
+            shape_groups=shape_groups, 
+            tensors=tensors, 
+            img=img)
     
 class CanvasNIMANet(nn.Module):
     
@@ -217,7 +222,201 @@ class ParamHead(nn.Module):
         return {key: net(x) for key, net in self.nets.items()}
         
         
-def init_weights(m, gain=3):
+def init_weights(m, gain=0.3):
     if isinstance(m, nn.Linear):
         torch.nn.init.xavier_uniform_(m.weight, gain=gain)
         m.bias.data.fill_(0.01)
+        
+        
+    
+class EdgeToEdgeDistanceLoss(nn.Module):
+    
+    def __init__(self, safe_distance=0.):
+        super().__init__()
+        self.safe_distance = safe_distance
+        
+    def forward(self, outputs):
+        tensors = outputs['tensors']
+        shapes_tensors = tensors['shapes_tensors']
+        dists = torch.cdist(shapes_tensors['center'], shapes_tensors['center'])
+        upper_dists = torch.triu(dists)
+        nonzero_inds = torch.nonzero(upper_dists, as_tuple=True)
+        dists[nonzero_inds]
+        summed_rads = torch.atleast_2d(shapes_tensors['radius']).T + torch.atleast_2d(shapes_tensors['radius'])
+        edge_to_edge_dists = dists[nonzero_inds] - summed_rads[nonzero_inds]
+        if self.safe_distance is None:
+            return torch.exp(-edge_to_edge_dists).mean()
+        else:
+            return F.relu(self.safe_distance - edge_to_edge_dists).mean()
+    
+class OutOfBoundsLoss(nn.Module):
+    
+    def __init__(
+        self,
+        left,
+        right,
+        top,
+        bottom,
+        ):
+        super().__init__()
+        self.left = left
+        self.right = right
+        self.top = top
+        self.bottom = bottom
+    
+    def forward(self, outputs):
+        tensors = outputs['tensors']
+        centers = tensors['shapes_tensors']['center']
+        xs = centers[:, 0]
+        ys = centers[:, 1]
+        radii = tensors['shapes_tensors']['radius']
+        
+        left_edge_dist = torch.exp(-((xs -radii) - self.left))
+        right_edge_dist = torch.exp(-((self.right - (xs + radii))))
+        bottom_edge_dist = torch.exp(-((ys - radii) - self.bottom))
+        top_edge_dist = torch.exp(-(self.top - (ys + radii)))
+        return (left_edge_dist + right_edge_dist + bottom_edge_dist + top_edge_dist).mean()
+    
+    
+class TargetImageLoss(nn.Module):
+    
+    def __init__(self, target_img):
+        super().__init__()
+        self.target_img = target_img.detach()
+        
+    def forward(self, outputs):
+        img = outputs['img']
+        return ((self.target_img - img) ** 2).mean()
+    
+class NIMALoss(nn.Module):
+    
+    def __init__(
+        self, 
+        weight_path='/home/naka/code/side/ML-Aesthetics-NIMA/weights/dense121_all.pt',
+        num_classes=10,
+        ):
+        
+        super().__init__()
+        model_ft = models.densenet121(pretrained=True)
+        num_ftrs = model_ft.classifier.in_features
+        model_ft.classifier = nn.Sequential(
+            nn.Linear(num_ftrs,num_classes),
+            nn.Softmax(1)
+        )   
+
+        # Send the model to GPU
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model_ft = model_ft.to(device)
+        for param in model_ft.parameters():
+            param.requires_grad = False
+        self.model_ft = model_ft
+    
+    def forward(self, outputs):
+        img = outputs['img']
+        scores = self.model_ft(img)
+        weighted_votes = torch.arange(10, dtype=torch.float, device=img.device) + 1
+        return -torch.matmul(scores, weighted_votes)
+    
+    
+class CLIPLoss(nn.Module):
+    
+    def __init__(self, model="ViT-B/32"):
+        super().__init__()
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        perceptor, preprocess = clip.load(model, device=device)
+        for param in perceptor.parameters():
+            param.requires_grad = False
+        self.perceptor = perceptor
+        self.text_targets = []
+        self.normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
+                                    std=[0.26862954, 0.26130258, 0.27577711])
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        
+    def forward(self, outputs):
+        img = outputs['img']
+        z = self.perceptor.encode_image(self.normalize(img)).float()
+        return sum([F.mse_loss(z, t) for t in self.text_targets])
+    
+    def encode_text(self, text):
+        return self.perceptor.encode_text(clip.tokenize(text).to(self.device)).float()
+    
+    def set_text_prompts(self, text_prompts):
+        self.text_targets = [self.encode_text(s) for s in text_prompts]
+        
+        
+
+class MakeCutouts(nn.Module):
+    def __init__(self, cutout_params, cut_size, cutn, cut_pow=1., noise_fac=0.1, use_pooling=False):
+        super().__init__()
+        self.cut_size = cut_size
+        self.cutn = cutn
+        self.cut_pow = cut_pow
+        self.cutout_params = cutout_params
+        self.cutout_params['random_crop']['size'] = (self.cut_size,self.cut_size)
+        self.cutout_params['random_resized_crop']['size'] = (self.cut_size,self.cut_size)
+        self.use_pooling = use_pooling
+        # Pick your own augments & their order
+        self.augment_list = []
+        for aug_name, aug_settings in self.cutout_params.items():
+            if aug_settings['use']:
+                params = {key: value for key, value in aug_settings.items() if key != 'use'}
+                func_name = ''.join([c.capitalize() for c in aug_name.split('_')])
+                aug = getattr(K, func_name)(**params)
+                self.augment_list.append(aug)
+            
+        # print(augment_list)
+        
+        self.augs = nn.Sequential(*self.augment_list)
+
+        '''
+        self.augs = nn.Sequential(
+            # Original:
+            # K.RandomHorizontalFlip(p=0.5),
+            # K.RandomVerticalFlip(p=0.5),
+            # K.RandomSolarize(0.01, 0.01, p=0.7),
+            # K.RandomSharpness(0.3,p=0.4),
+            # K.RandomResizedCrop(size=(self.cut_size,self.cut_size), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5),
+            # K.RandomCrop(size=(self.cut_size,self.cut_size), p=0.5), 
+            # Updated colab:
+            K.RandomAffine(degrees=15, translate=0.1, p=0.7, padding_mode='border'),
+            K.RandomPerspective(0.7,p=0.7),
+            K.ColorJitter(hue=0.1, saturation=0.1, p=0.7),
+            K.RandomErasing((.1, .4), (.3, 1/.3), same_on_batch=True, p=0.7),        
+            )
+        '''
+            
+        self.noise_fac = noise_fac
+        # self.noise_fac = False
+        
+        # Pooling
+        if use_pooling:
+            self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
+            self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
+
+    def forward(self, input):
+        sideY, sideX = input.shape[2:4]
+        max_size = min(sideX, sideY)
+        min_size = min(sideX, sideY, self.cut_size)
+        cutouts = []
+        
+        for _ in range(self.cutn):
+            if self.use_pooling:
+                cutout = (self.av_pool(input) + self.max_pool(input))/2
+                cutouts.append(cutout)
+                
+            else:
+                size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
+                offsetx = torch.randint(0, sideX - size + 1, ())
+                offsety = torch.randint(0, sideY - size + 1, ())
+                cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
+                cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
+            # cutout = transforms.Resize(size=(self.cut_size, self.cut_size))(input)
+            
+            
+            
+        batch = self.augs(torch.cat(cutouts, dim=0))
+        
+        if self.noise_fac:
+            facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
+            batch = batch + facs * torch.randn_like(batch)
+        return batch
