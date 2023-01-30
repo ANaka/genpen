@@ -989,7 +989,7 @@ def random_split(geoms, n_layers):
 
 def polygonize_circle(circle, n_corners):
     angles = np.linspace(0, 1, n_corners+1)
-    corners = [circle.boundary.interpolate(a, normalized=True) for a in angles]
+    corners = [circle.boundary.interpolate(a, normalized=True) for a in angles[:-1]]
     return Polygon(corners)
 
 def reg_polygon(point, radius, n_corners, **kwargs):
@@ -1007,7 +1007,7 @@ class RegPolygon(object):
     @property
     def poly(self):
         poly = reg_polygon(self.point, self.radius, self.n_corners, **self.buffer_kwargs)
-        return sa.rotate(poly, self.rotation)
+        return sa.rotate(poly, self.rotation, origin='centroid')
     
     @property
     def corners(self):
