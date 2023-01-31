@@ -1446,5 +1446,20 @@ class CenteredAngledLine(object):
         ls = angled_line
         
     
-def vsketch_to_shapely(sketch):
-    return [[LineString([Point(pt.real, pt.imag) for pt in lc]) for lc in layer] for layer in sketch.document.layers.values()]
+def split_linestring(linestring):
+    """split a linestring into individual lines"""
+    lines = []
+    for i in range(len(linestring.coords)-1):
+        lines.append(LineString([linestring.coords[i], linestring.coords[i+1]]))
+    return MultiLineString(lines)
+    
+def dash_linestring(linestring, interpolation_distances):
+    new_lines = []
+    ii = 0
+    while ii < len(interpolation_distances)-1:
+        pt0 = linestring.interpolate(interpolation_distances[ii], normalized=True)
+        pt1 = linestring.interpolate(interpolation_distances[ii+1], normalized=True)
+        new_line = LineString([pt0, pt1])
+        new_lines.append(new_line)
+        ii += 2
+    return MultiLineString(new_lines)
